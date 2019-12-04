@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 function(executable name)
     add_executable(${name} ${name}/main.cpp)
     target_link_libraries(${name} tlpi)
+    set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${name})
 endfunction()
 
 add_subdirectory(lib)
