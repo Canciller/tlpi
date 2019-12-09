@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 function(tlpi_executable name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} tlpi)
+    #target_compile_definitions(${name} PUBLIC _FILE_OFFSET_BITS=64)
 endfunction()
 
 add_subdirectory(lib)

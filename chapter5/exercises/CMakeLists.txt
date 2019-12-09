@@ -1,1 +1,5 @@
+tlpi_executable(exercise_1)
+tlpi_executable(exercise_2)
+tlpi_executable(exercise_3)
+tlpi_executable(exercise_4)
 tlpi_executable(exercise_7)
