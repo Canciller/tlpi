@@ -1,10 +1,11 @@
 #include <cstdio>
 #include <cstdarg>
+#include <cstring>
 #include <unistd.h>
 
 #define PAGESIZE sysconf(_SC_PAGESIZE)
 
-#define ALLOC_MIN 4 * PAGESIZE
+#define ALLOC_MIN 3 * PAGESIZE
 #define DEALLOC_MIN 1 * PAGESIZE
 
 #define DEBUG
@@ -29,6 +30,18 @@ blk_t *head = NULL,
 #define MEM_PART(blk) PTR(blk) + sizeof(blk_t)
 
 #ifdef DEBUG
+void print_blk(blk_t *blk)
+{
+    if(!blk) {
+        printf("(nil)\n");
+        return;
+    };
+
+    printf("*(%p) = { alloc_size: %zu (%zu + %zu), size: %zu, previous: %p, next: %p, end: %p }\n",
+            blk, blk->alloc_size, blk->alloc_size - blk->size, blk->size, blk->size,
+            blk->previous, blk->next, MEM_PART(blk) + blk->size);
+}
+
 void print_blks(const char *format, ...) {
 
     static size_t count = 0;
@@ -41,15 +54,18 @@ void print_blks(const char *format, ...) {
     vprintf(buff, args);
     va_end(args);
 
+    printf("sbrk(0) = %p\n", sbrk(0));
+    printf("tail = ");
+    print_blk(tail);
+    printf("head = ");
+    print_blk(head);
     blk_t *curr = tail;
     while(curr) {
-        printf("*(%p) = { alloc_size: %zu (%zu + %zu), size: %zu, previous: %p, next: %p }\n",
-                curr, curr->alloc_size, curr->alloc_size - curr->size, curr->size, curr->size,
-                curr->previous, curr->next);
+        print_blk(curr);
         curr = curr->next;
     }
 
-    printf("END\n");
+    printf("END\n\n");
 }
 #else
 #define print_blks(...)
@@ -198,21 +214,54 @@ void merge_blks()
 
         curr = curr->next;
     }
+
+    // return memory to os
+
+    char *pb = PTR(sbrk(0));
+    if(pb == PTR(-1))
+        return;
+
+    if(pb == MEM_PART(head) + head->size) {
+        if(head->size <= DEALLOC_MIN) {
+            printf("[free] returning memory to os\n\n");
+            if(sbrk(-head->size - sizeof(blk_t)) == (void *)(-1))
+                return;
+
+            if(head == tail) {
+                head = tail = NULL;
+                return;
+            }
+
+            if(head->previous) {
+                head->previous->next = NULL;
+                head = head->previous;
+                return;
+            }
+        }
+    }
 }
 
 void free(void *ptr)
 {
-    print_blks("free(%p) before add_blk", ptr);
-    add_blk(BLK_PART(ptr));
-    print_blks("free(%p) after add_blk, before merge_blks", ptr);
+    if(ptr == NULL)
+        return;
+
+    blk_t *blk = BLK_PART(ptr);
+
+
+    add_blk(blk);
+
+    print_blks("free(%p) before", blk);
+
     merge_blks();
-    print_blks("free(%p) after merge_blks", ptr);
+
+    print_blks("free(%p) after", blk);
 }
 
 void *malloc(size_t size)
 {
     size_t required_size = size + sizeof(blk_t),
-           alloc_size = (required_size > ALLOC_MIN ? required_size : ALLOC_MIN);
+           alloc_size = (size > ALLOC_MIN ? required_size : ALLOC_MIN + sizeof(blk_t));
 
     blk_t *blk = NULL,
           *new_blk = NULL,
@@ -220,14 +269,14 @@ void *malloc(size_t size)
 
     while(curr) {
         if(curr->size >= size) {
-            print_blks("malloc(%zu) before remove_blk", size);
-            remove_blk(curr);
+            print_blks("malloc(%zu) before", size);
 
-            print_blks("malloc(%zu) after remove_blk, before resize_blk", size);
+            remove_blk(curr);
             new_blk = resize_blk(curr, curr->size + sizeof(blk_t), required_size);
-            print_blks("malloc(%zu) after resize_blk, before add_blk", size);
             add_blk(new_blk);
-            print_blks("malloc(%zu) after add_blk", size);
+
+            print_blks("malloc(%zu) after", size);
+            printf("malloc(%zu) return %p\n\n", size, curr);
 
             return MEM_PART(curr);
         }
@@ -235,23 +284,57 @@ void *malloc(size_t size)
         curr = curr->next;
     }
 
+    printf("[malloc] sbrk(0) = %p\n\n", sbrk(0));
+
     blk = BLK(sbrk(alloc_size));
     if(blk == BLK(-1))
         return NULL;
 
-    print_blks("malloc(%zu) before resize_blk", size);
+    print_blks("malloc(%zu) before, using sbrk", size);
+
     new_blk = resize_blk(blk, alloc_size, required_size);
-    print_blks("malloc(%zu) after resize_blk, before add_blk", size);
     add_blk(new_blk);
-    print_blks("malloc(%zu) after add_blk", size);
+
+    print_blks("malloc(%zu) after, using sbrk", size);
+    printf("malloc(%zu) return %p\n\n", size, blk);
 
     return MEM_PART(blk);
 }
 
 int main(int argc, char *argv[])
 {
-    void *p2 = malloc(1);
+    printf("ALLOC_MIN: %zu\n", ALLOC_MIN);
+    printf("DEALLOC_MIN: %zu\n\n", DEALLOC_MIN);
+
+    void *p1 = malloc(1);
+    char *str = (char *) malloc(10);
+
+    free(p1);
+    free(str);
+
+    void *p2 = malloc(20);
+    void *p3 = malloc(20);
+    void *p4 = malloc(100);
+
+    free(p3);
+    free(p4);
     free(p2);
+
+    free(malloc(1));
+
+    void *p5 = malloc(2 * PAGESIZE);
+    void *p6 = malloc(ALLOC_MIN);
+    free(p5);
+    free(p6);
+
+    void *ptr[10] = {};
+    for(size_t i = 0; i < 10; ++i) {
+        ptr[i] = malloc(PAGESIZE);
+    }
+
+    for(int i = 9; i >= 0; --i) {
+        free(ptr[i]);
+    }
 
     return 0;
 }
